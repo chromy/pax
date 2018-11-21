@@ -1215,6 +1215,8 @@ impl Worker {
                 struct Package {
                     #[serde(default)]
                     main: Value,
+                    #[serde(default)]
+                    browser: Value,
 
                     // Efficiently skip deserializing other fields.
                 }
@@ -1228,6 +1230,16 @@ impl Worker {
                         path.append_resolving(main);
                     }
                 }
+
+                match result.browser.as_object() {
+                    None => {
+                        // Do nothing if `browser` is not present or not a string.
+                    }
+                    Some(browser) => {
+                        println!("{:#?}", browser.len());
+                    }
+                }
+
             },
             Err(_error) => {
                 // if error.kind() != io::ErrorKind::NotFound {
@@ -1265,6 +1277,14 @@ impl Worker {
                 return Ok(Some(path))
             }
             path.pop();
+        }
+
+        // <path>.js
+        let mut browser_file_name = file_name.to_owned();
+        browser_file_name.push("-browser.js");
+        path.set_file_name(&browser_file_name);
+        if path.is_file() {
+            return Ok(Some(path))
         }
 
         // <path>.js
