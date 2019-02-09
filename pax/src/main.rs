@@ -108,7 +108,16 @@ impl<'a, 'b> Writer<'a, 'b> {
         modules
     }
 
-    fn write_to<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
+    fn get_path<'c>(&self, path: &'c Path) -> Result<&'c Path, CliError> {
+        let root_dir = self.entry_point.parent().unwrap();
+        if path.starts_with(root_dir) {
+            Ok(path.strip_prefix(root_dir)?)
+        } else {
+            Ok(path)
+        }
+    }
+
+    fn write_to<W: io::Write>(&self, w: &mut W) -> Result<(), CliError> {
         w.write_all(HEAD_JS.as_bytes())?;
         // for (module, main) in self.mains {
         //     write!(w,
@@ -119,9 +128,9 @@ impl<'a, 'b> Writer<'a, 'b> {
         // }
 
         for (file, info) in self.sorted_modules() {
-            let id = Self::name_path(&file);
-            let deps = Self::stringify_deps(&info.deps);
-            let filename = Self::js_path(&file);
+            let id = Self::name_path(self.get_path(&file)?);
+            let deps = self.stringify_deps(&info.deps)?;
+            let filename = Self::js_path(self.get_path(&file)?);
 
             write!(w,
                 "\n  Pax.files[{filename}] = {id}; {id}.deps = {deps}; {id}.filename = {filename}; function {id}(module, exports, require, __filename, __dirname, __import_meta) {{\n",
@@ -142,7 +151,7 @@ impl<'a, 'b> Writer<'a, 'b> {
             }
             write!(w, "}}")?;
         }
-        let main = Self::name_path(self.entry_point);
+        let main = Self::name_path(self.get_path(self.entry_point)?);
         write!(w,
             "\n  Pax.main = {main}; Pax.makeRequire(null)()\n  if (typeof module !== 'undefined') module.exports = Pax.main.module && Pax.main.module.exports\n",
             main = main,
@@ -292,7 +301,7 @@ impl<'a, 'b> Writer<'a, 'b> {
         })
     }
 
-    fn stringify_deps(deps: &FnvHashMap<String, Resolved>) -> String {
+    fn stringify_deps(&self, deps: &FnvHashMap<String, Resolved>) -> Result<String, CliError> {
         let mut result = "{".to_owned();
         let mut comma = false;
         for (name, resolved) in deps {
@@ -313,13 +322,13 @@ impl<'a, 'b> Writer<'a, 'b> {
                     }
                     result.push_str(&to_quoted_json_string(name));
                     result.push(':');
-                    Self::write_name_path(path, &mut result);
+                    Self::write_name_path(self.get_path(path)?, &mut result);
                     comma = true;
                 }
             }
         }
         result.push('}');
-        result
+        Ok(result)
     }
 
     #[cfg(target_os = "windows")]
@@ -906,6 +915,7 @@ pub enum CliError {
     Es6(es6::Error),
     Lex(lex::Error),
     ParseStrLit(lex::ParseStrLitError),
+    StripPrefixError(path::StripPrefixError),
     Box(Box<Any + Send + 'static>),
 }
 impl From<io::Error> for CliError {
@@ -941,6 +951,11 @@ impl From<lex::ParseStrLitError> for CliError {
 impl From<Box<Any + Send + 'static>> for CliError {
     fn from(inner: Box<Any + Send + 'static>) -> CliError {
         CliError::Box(inner)
+    }
+}
+impl From<path::StripPrefixError> for CliError {
+    fn from(inner: path::StripPrefixError) -> CliError {
+        CliError::StripPrefixError(inner)
     }
 }
 
@@ -1023,6 +1038,9 @@ impl fmt::Display for CliError {
                 write!(f, "{}", inner)
             }
             CliError::ParseStrLit(ref inner) => {
+                write!(f, "{}", inner)
+            }
+            CliError::StripPrefixError(ref inner) => {
                 write!(f, "{}", inner)
             }
             CliError::Box(ref inner) => {
